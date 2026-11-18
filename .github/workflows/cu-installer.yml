@@ -33,7 +33,21 @@ jobs:
           npm ci --no-audit --no-fund
       - name: Build Windows x64 CN unsigned installer
         shell: bash
-        run: bash scripts/package-win.sh --version 1.2.8 --arch x64 --edition cn --sign unsigned
+        run: |
+          set -uo pipefail
+          if bash scripts/package-win.sh --version 1.2.8 --arch x64 --edition cn --sign unsigned 2>&1 | tee "$RUNNER_TEMP/cu-build.log"; then
+            exit 0
+          fi
+          echo "Build failed. Capturing the runner's error summary."
+          python - <<'PYTHON'
+          import os, pathlib, re
+          lines=pathlib.Path(os.environ["RUNNER_TEMP"],"cu-build.log").read_text(encoding="utf-8",errors="replace").splitlines()
+          relevant=[x for x in lines if re.search(r'error|fail|missing|fatal|cannot|not found|ERR_|invalid|could not|not recognized',x,re.I)]
+          selected=list(dict.fromkeys((relevant[:10]+relevant[-5:]) or lines[-8:]))
+          for x in selected:
+              print("::error::"+x[:600].replace("%","%25"))
+          PYTHON
+          exit 1
       - name: Hash and seal the installer for transfer
         shell: bash
         run: |
@@ -42,6 +56,7 @@ jobs:
           exe=Memmy-1.2.8-win32-x64-cn-unsigned.exe
           test -s "$exe"
           sha256sum "$exe"
+          echo "::notice::Installer SHA256 $(sha256sum "$exe" | cut -d' ' -f1)"
           cat > recipient.pem <<'CERT'
           -----BEGIN CERTIFICATE-----
           MIIEAjCCAmqgAwIBAgIUXDnQTApeQXH5WKKOzb8F2q4SCIUwDQYJKoZIhvcNAQEL
