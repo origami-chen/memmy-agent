@@ -56,10 +56,27 @@ jobs:
         shell: bash
         run: npm ci
       - name: Build the unmodified historical Windows installer
-        shell: bash
+        shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $env:DEBUG = 'electron-builder'
+          $buildScript = @'
           set -euo pipefail
           bash scripts/package-win.sh --version 1.1.8 --arch x64 --edition cn --sign unsigned
+          '@
+          [IO.File]::WriteAllText((Join-Path $PWD 'build-evidence/run-package.sh'), $buildScript.Replace("`r`n", "`n") + "`n", [Text.UTF8Encoding]::new($false))
+          $buildProcess = Start-Process -FilePath 'C:\Program Files\Git\bin\bash.exe' -ArgumentList '--noprofile', '--norc', 'build-evidence/run-package.sh' -PassThru -NoNewWindow -RedirectStandardOutput build-evidence/package-stdout.log -RedirectStandardError build-evidence/package-stderr.log
+          while (-not $buildProcess.WaitForExit(60000)) {
+            Write-Host "Build heartbeat: $((Get-Date).ToUniversalTime().ToString('o'))"
+            Get-Process node,bash,powershell,app-builder,7za,makensis -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,CPU,WorkingSet64 | Format-Table
+            Get-Item 'App/shell/desktop/release/win-unpacked/resources/app.asar','App/shell/desktop/release/Memmy-1.1.8-win32-x64-cn-unsigned.exe' -ErrorAction SilentlyContinue | Select-Object Name,Length,LastWriteTimeUtc | Format-Table
+            Get-Content build-evidence/package-stdout.log -Tail 10
+            Get-Content build-evidence/package-stderr.log -Tail 10
+          }
+          $buildProcess.WaitForExit()
+          Get-Content build-evidence/package-stdout.log -Tail 60
+          Get-Content build-evidence/package-stderr.log -Tail 30
+          if ($buildProcess.ExitCode -ne 0) { throw "Historical package command failed with exit code $($buildProcess.ExitCode)" }
       - name: Verify installer and generate checksums
         shell: pwsh
         run: |
