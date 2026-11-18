@@ -1,0 +1,78 @@
+name: Windows CU acceptance installer
+on:
+  push:
+    branches: [codex/package-cu-v128-ad7fea9e2]
+    paths: [.github/workflows/cu-installer.yml]
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: windows-2025
+    timeout-minutes: 100
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      MEMMY_CLOUD_SERVICE: https://api.memmy.cn
+      MEMMY_LEGAL_CN_BASE_URL: https://memmy.cn
+      MEMMY_LEGAL_INTL_BASE_URL: https://memmy.bot
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: MemTensor/memmy-agent
+          ref: ad7fea9e211a0fbb5b672e182eac8df811517475
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.2'
+          architecture: x64
+      - name: Verify input and install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = ad7fea9e211a0fbb5b672e182eac8df811517475
+          node scripts/internal/shared/verify-package-version.mjs --expected 1.2.8
+          npm ci --no-audit --no-fund
+      - name: Build Windows x64 CN unsigned installer
+        shell: bash
+        run: bash scripts/package-win.sh --version 1.2.8 --arch x64 --edition cn --sign unsigned
+      - name: Hash and seal the installer for transfer
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd App/shell/desktop/release
+          exe=Memmy-1.2.8-win32-x64-cn-unsigned.exe
+          test -s "$exe"
+          sha256sum "$exe"
+          cat > recipient.pem <<'CERT'
+          -----BEGIN CERTIFICATE-----
+          MIIEAjCCAmqgAwIBAgIUXDnQTApeQXH5WKKOzb8F2q4SCIUwDQYJKoZIhvcNAQEL
+          BQAwITEfMB0GA1UEAwwWQ1UgaW5zdGFsbGVyIHRyYW5zcG9ydDAeFw0yNjExMTgw
+          ODMwNDVaFw0yNjExMjEwODMwNDVaMCExHzAdBgNVBAMMFkNVIGluc3RhbGxlciB0
+          cmFuc3BvcnQwggGiMA0GCSqGSIb3DQEBAQUAA4IBjwAwggGKAoIBgQDmzeNhehvi
+          XscOYKpfhRZ7p+9LoQfnhzsFiUAFBEV7rnWOnrgSph/vJPNltS1VoNoZxjC4s/Nf
+          n6vbyn2ZY5d9eUJijTFy6NcDfWb63TPEksan9gMYhSyAb80OcGBgYlHR/Qgx2O33
+          qiQ3Es+rwIrW0b7ZuB5qwO2jmsJpxjhHmK5pE+E/VTiKAjbdgzW3zacVdSKMIaMR
+          sWzTFxSDsZ/lAH9sfoXHlFdsBQaJNPBov9i26WR5ErcVnHcv//0NZy3NedHEu90d
+          Elpnsf8GiCXraYvabHJyoK71AyLYBKU54rx53tIursn161qxxrfLr5jczDA3MBOn
+          6KdbvnZYuoAWtcQnFKv+4nDuY5lTOKzpTIa8MgSOFvDASfW72Mtou4ZYDl7/upBH
+          eSnSHI6wsrF+IetZytOF/hAYZn8XjqCYM6Z2/sS2COSApYsDJuWH88GzT9IF1lRG
+          QSPNV+t2E9ff+h2jvauwZaZKLqb3aEEsBDwr46MrXoF4EEtcorfZFWMCAwEAAaMy
+          MDAwHQYDVR0OBBYEFCXMTFqIpjPPgwy427mbAHuMSKNMMA8GA1UdEwEB/wQFMAMB
+          Af8wDQYJKoZIhvcNAQELBQADggGBAJeYcJLy53nKpF9Xn2Md3Zn7GS+0dl+SX0kS
+          wNcgNyuVG03Bd76kS9oc8imgERMAgNlnVe8Iz6HMXW7mN/Wask5k5r1r+aJyt78E
+          H1JJDFLDSHwlet4JuMi4xqwmh9jsdHCjOq1T2e02qkiLjdq6DWxL5X6QmWAQENR5
+          kIPv0/LtCKCcw+uHFRX3FyQpbCdVFaNmCab+R69R5JmcJUFzPsNR2uSLIdaJH3UI
+          3vEDztpja6ztgtywufictzV72BA/Qspv3AVJCXi0AMgEmQ+xlZvfE4IAtJpEWN2t
+          bJv7m8IHgK09MqgY6tx1Lb8z66813kQLeS4fZfckcSp+BdV+RWJxwm9RBlIKIW7c
+          489PDKaNGmmsJKx3UCH5CNI/EfuDPyV6rI36/bHQAVuXKCrDX+4TALYA18iGHqU6
+          biXTuFiBRBG3dIF5RGBpnBpttAMJAS7Dx2V/Yq9Nx5nFdqkOQpcTdxVEZAPSqHf7
+          Mwe/4J8N2cat89ICJr4OasPKlSrwww==
+          -----END CERTIFICATE-----
+          CERT
+          openssl cms -encrypt -binary -aes256 -in "$exe" -outform DER -out installer.cms recipient.pem
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cu-win128-ad7fea9e2
+          path: App/shell/desktop/release/installer.cms
+          if-no-files-found: error
+          retention-days: 2
+          compression-level: 0
