@@ -46,7 +46,7 @@ jobs:
             image_version = $env:ImageVersion
             node = (node --version)
             npm = (npm --version)
-            command = 'npm run package:win:x64:cn:unsigned'
+            command = 'bash scripts/package-win.sh --version 1.1.8 --arch x64 --edition cn --sign unsigned'
             built_at_utc = (Get-Date).ToUniversalTime().ToString('o')
             runtime_acceptance = 'Not performed; Windows manual validation required'
           }
@@ -58,7 +58,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm run package:win:x64:cn:unsigned
+          bash scripts/package-win.sh --version 1.1.8 --arch x64 --edition cn --sign unsigned
       - name: Verify installer and generate checksums
         shell: pwsh
         run: |
