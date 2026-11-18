@@ -1,0 +1,99 @@
+name: Historical CH Windows package
+
+on:
+  push:
+    branches: [codex/package-ch-d5e79e0b7]
+    paths: [.github/workflows/historical-ch-windows-package.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      SOURCE_SHA: d5e79e0b7b483bdcbb23a1f1ecc10c424f89898b
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      MEMMY_LEGAL_CN_BASE_URL: https://memmy.cn
+      MEMMY_LEGAL_INTL_BASE_URL: https://memmy.bot
+    steps:
+      - name: Check out the exact historical source
+        uses: actions/checkout@v4
+        with:
+          repository: MemTensor/memmy-agent
+          ref: d5e79e0b7b483bdcbb23a1f1ecc10c424f89898b
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.2'
+          architecture: x64
+      - name: Record source and build environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((git rev-parse HEAD).Trim() -ne $env:SOURCE_SHA) { throw 'Unexpected source commit' }
+          if (git status --porcelain) { throw 'Source checkout is not clean' }
+          New-Item -ItemType Directory -Force -Path build-evidence | Out-Null
+          $record = [ordered]@{
+            source_commit = (git rev-parse HEAD).Trim()
+            source_tree = (git rev-parse 'HEAD^{tree}').Trim()
+            source_version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+            workflow_commit = '${{ github.sha }}'
+            runner_os = $env:RUNNER_OS
+            runner_arch = $env:RUNNER_ARCH
+            image_version = $env:ImageVersion
+            node = (node --version)
+            npm = (npm --version)
+            command = 'npm run package:win:x64:cn:unsigned'
+            built_at_utc = (Get-Date).ToUniversalTime().ToString('o')
+            runtime_acceptance = 'Not performed; Windows manual validation required'
+          }
+          $record | ConvertTo-Json | Set-Content build-evidence/build-manifest.json
+      - name: Install locked root dependencies
+        shell: bash
+        run: npm ci
+      - name: Build the unmodified historical Windows installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run package:win:x64:cn:unsigned
+      - name: Verify installer and generate checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = 'App/shell/desktop/release/Memmy-1.1.8-win32-x64-cn-unsigned.exe'
+          if (-not (Test-Path $installer)) { throw 'Expected installer is missing' }
+          $file = Get-Item $installer
+          if ($file.Length -lt 1MB) { throw 'Installer is unexpectedly small' }
+          $stream = [IO.File]::OpenRead($file.FullName)
+          try { if ($stream.ReadByte() -ne 77 -or $stream.ReadByte() -ne 90) { throw 'Installer is not a Windows executable' } } finally { $stream.Dispose() }
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($file.Name)" | Set-Content build-evidence/SHA256SUMS.txt
+          $manifest = Get-Content build-evidence/build-manifest.json -Raw | ConvertFrom-Json
+          $manifest | Add-Member -NotePropertyName installer -NotePropertyValue $file.Name
+          $manifest | Add-Member -NotePropertyName installer_bytes -NotePropertyValue $file.Length
+          $manifest | Add-Member -NotePropertyName sha256 -NotePropertyValue $hash
+          $manifest | ConvertTo-Json | Set-Content build-evidence/build-manifest.json
+          git diff --name-only | Set-Content build-evidence/build-modified-paths.txt
+          Write-Host "Installer: $($file.Name); bytes: $($file.Length); SHA256: $hash"
+      - name: Upload installer and provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: Memmy-1.1.8-Windows-CH-d5e79e0b7
+          path: |
+            App/shell/desktop/release/Memmy-1.1.8-win32-x64-cn-unsigned.exe
+            build-evidence/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: historical-ch-build-diagnostics
+          path: |
+            build-evidence/
+            App/shell/desktop/release/logs/
+          retention-days: 7
