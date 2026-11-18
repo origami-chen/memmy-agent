@@ -49,7 +49,7 @@ jobs:
             npm = (npm --version)
             command = 'bash scripts/package-win.sh --version 1.1.8 --arch x64 --edition cn --sign unsigned'
             built_at_utc = (Get-Date).ToUniversalTime().ToString('o')
-            build_adjustment = 'Remove only an undeclared generated Memory runtime backlink to the source root before packaging; product source unchanged'
+            build_adjustment = 'Generate Memory runtime lock inside its own directory with workspace discovery disabled; verify/remove only an undeclared source-root backlink before packaging; product source unchanged'
             runtime_acceptance = 'Not performed; Windows manual validation required'
           }
           $record | ConvertTo-Json | Set-Content build-evidence/build-manifest.json
@@ -92,6 +92,9 @@ jobs:
           [IO.File]::WriteAllText((Join-Path $PWD 'build-evidence/remove-staging-backlink.cjs'), $guardScript, [Text.UTF8Encoding]::new($false))
           $packScriptPath = Join-Path $PWD 'scripts/internal/win/build-nsis.sh'
           $packScript = [IO.File]::ReadAllText($packScriptPath)
+          $lockCommand = 'npm install --prefix "$RUNTIME_DIR/memory" --package-lock-only --ignore-scripts --os=win32 --cpu=x64'
+          if (-not $packScript.Contains($lockCommand)) { throw 'Memory lock generation command not found' }
+          $packScript = $packScript.Replace($lockCommand, '(cd "$RUNTIME_DIR/memory" && npm install --package-lock-only --ignore-scripts --os=win32 --cpu=x64 --workspaces=false)')
           $needle = 'package_step_start "Run electron-builder Windows NSIS packaging"'
           if (-not $packScript.Contains($needle)) { throw 'Packaging insertion point not found' }
           $packScript = $packScript.Replace($needle, 'node "$ROOT_DIR/build-evidence/remove-staging-backlink.cjs"' + "`n" + $needle)
