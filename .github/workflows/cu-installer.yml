@@ -30,7 +30,29 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = ad7fea9e211a0fbb5b672e182eac8df811517475
           node scripts/internal/shared/verify-package-version.mjs --expected 1.2.8
-          npm ci --no-audit --no-fund
+          npm ci --include=dev --no-audit --no-fund
+          node - <<'JS'
+          const fs = require('node:fs'), path = require('node:path');
+          const root = path.resolve('Migrations'), pkg = require(root + '/package.json');
+          for (const name of Object.keys({...pkg.dependencies, ...pkg.devDependencies})) {
+            const dirs = require.resolve.paths(name);
+            if (![path.join(root, 'node_modules'), ...dirs].some(dir => fs.existsSync(path.join(dir, name, 'package.json')))) {
+              throw new Error('Missing locked migration dependency: ' + name);
+            }
+          }
+          JS
+          python - <<'PYTHON'
+          from pathlib import Path
+          script=Path('scripts/internal/win/build-nsis.sh')
+          source=script.read_text()
+          install='npm_with_configured_script_shell install --workspace @memmy/migrations --include=dev --ignore-scripts --package-lock=false --no-audit --no-fund'
+          assert source.count(install)==1
+          source=source.replace(install,'log "Using verified migration dependencies installed by root npm ci"')
+          lock='npm install --prefix "$RUNTIME_DIR/memory" --package-lock-only --ignore-scripts --os=win32 --cpu=x64'
+          assert source.count(lock)==1
+          source=source.replace(lock,'(cd "$RUNTIME_DIR/memory" && npm install --package-lock-only --ignore-scripts --os=win32 --cpu=x64 --workspaces=false)')
+          with script.open('w',newline='\n') as f: f.write(source)
+          PYTHON
       - name: Build Windows x64 CN unsigned installer
         shell: bash
         run: |
