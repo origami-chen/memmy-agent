@@ -51,6 +51,9 @@ jobs:
           lock='npm install --prefix "$RUNTIME_DIR/memory" --package-lock-only --ignore-scripts --os=win32 --cpu=x64'
           assert source.count(lock)==1
           source=source.replace(lock,'(cd "$RUNTIME_DIR/memory" && npm install --package-lock-only --ignore-scripts --os=win32 --cpu=x64 --workspaces=false)')
+          old='install_better_sqlite3_win_x64 "$ROOT_DIR"'
+          assert source.count(old)==1
+          source=source.replace(old,'verify_windows_x64_native_module "$ROOT_DIR/node_modules/better-sqlite3/prebuilds/win32-x64.node" "desktop better-sqlite3"')
           with script.open('w',encoding='utf-8',newline='\n') as f: f.write(source)
           PYTHON
       - name: Build Windows x64 CN unsigned installer
