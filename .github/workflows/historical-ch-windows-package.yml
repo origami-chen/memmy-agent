@@ -49,24 +49,54 @@ jobs:
             npm = (npm --version)
             command = 'bash scripts/package-win.sh --version 1.1.8 --arch x64 --edition cn --sign unsigned'
             built_at_utc = (Get-Date).ToUniversalTime().ToString('o')
+            build_adjustment = 'Remove only an undeclared generated Memory runtime backlink to the source root before packaging; product source unchanged'
             runtime_acceptance = 'Not performed; Windows manual validation required'
           }
           $record | ConvertTo-Json | Set-Content build-evidence/build-manifest.json
       - name: Install locked root dependencies
         shell: bash
         run: npm ci
-      - name: Build the unmodified historical Windows installer
+      - name: Build the historical Windows installer
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $env:DEBUG = 'electron-builder'
-          # Instrument only the installed build tool; historical product source is unchanged.
-          $walkerPath = 'node_modules/builder-util/out/fs.js'
-          $walker = [IO.File]::ReadAllText((Join-Path $PWD $walkerPath))
-          $needle = 'const dirPath = queue.pop();'
-          if (-not $walker.Contains($needle)) { throw 'Build-tool diagnostic hook not found' }
-          $walker = $walker.Replace($needle, 'const dirPath = queue.pop(); if (result.length > 0 && result.length % 1000 < 10) console.log("WALK_TRACE", JSON.stringify({dirPath, queue: queue.length, files: result.length}));')
-          [IO.File]::WriteAllText((Join-Path $PWD $walkerPath), $walker, [Text.UTF8Encoding]::new($false))
+          # Remove only the demonstrated extraneous backlink from generated staging.
+          $guardScript = @'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const root = fs.realpathSync(process.cwd());
+          const runtime = path.join(root, 'App/shell/desktop/dist/runtime/memory');
+          const manifest = JSON.parse(fs.readFileSync(path.join(runtime, 'package.json'), 'utf8'));
+          const name = 'memmy-agent';
+          for (const key of ['dependencies', 'optionalDependencies', 'peerDependencies', 'devDependencies']) {
+            if (manifest[key]?.[name]) throw new Error('Backlink name is a declared runtime dependency');
+          }
+          const link = path.join(runtime, 'node_modules', name);
+          const evidence = { link, source_root: root, product_source_changed: false };
+          if (fs.existsSync(link)) {
+            const stat = fs.lstatSync(link);
+            const target = fs.realpathSync(link);
+            if (!stat.isSymbolicLink() || target.toLowerCase() !== root.toLowerCase()) {
+              throw new Error('Refusing to remove anything except the verified source-root backlink');
+            }
+            evidence.target = target;
+            evidence.link_target = fs.readlinkSync(link);
+            fs.unlinkSync(link);
+            evidence.removed = true;
+          } else evidence.removed = false;
+          if (fs.existsSync(link)) throw new Error('Backlink still exists');
+          fs.writeFileSync('build-evidence/staging-backlink.json', JSON.stringify(evidence, null, 2));
+          console.log('Verified staging backlink cleanup:', evidence);
+          '@
+          [IO.File]::WriteAllText((Join-Path $PWD 'build-evidence/remove-staging-backlink.cjs'), $guardScript, [Text.UTF8Encoding]::new($false))
+          $packScriptPath = Join-Path $PWD 'scripts/internal/win/build-nsis.sh'
+          $packScript = [IO.File]::ReadAllText($packScriptPath)
+          $needle = 'package_step_start "Run electron-builder Windows NSIS packaging"'
+          if (-not $packScript.Contains($needle)) { throw 'Packaging insertion point not found' }
+          $packScript = $packScript.Replace($needle, 'node "$ROOT_DIR/build-evidence/remove-staging-backlink.cjs"' + "`n" + $needle)
+          [IO.File]::WriteAllText($packScriptPath, $packScript, [Text.UTF8Encoding]::new($false))
+          git diff -- scripts/internal/win/build-nsis.sh | Set-Content build-evidence/packaging-only-adjustment.patch
           $buildScript = @'
           set -euo pipefail
           bash scripts/package-win.sh --version 1.1.8 --arch x64 --edition cn --sign unsigned
